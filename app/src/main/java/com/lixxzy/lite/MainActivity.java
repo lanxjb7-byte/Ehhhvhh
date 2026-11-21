@@ -226,13 +226,32 @@ public class MainActivity extends Activity {
     private String quote(String s) { return "'" + s.replace("'", "'\\''") + "'"; }
 
     private String runShell(String cmd) throws Exception {
-        java.lang.Process p = Shizuku.newProcess(new String[]{"sh", "-c", cmd}, null, null);
+        // Shizuku's newProcess method is not public in this API version.
+        // Invoke it reflectively so the project compiles against Shizuku 13.1.5.
+        java.lang.reflect.Method method = Shizuku.class.getDeclaredMethod(
+            "newProcess", String[].class, String[].class, String.class
+        );
+        method.setAccessible(true);
+        java.lang.Process p;
+        try {
+            p = (java.lang.Process) method.invoke(
+                null, new String[]{"sh", "-c", cmd}, null, null
+            );
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof Exception) throw (Exception) cause;
+            throw new RuntimeException(cause);
+        }
+
         BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+        BufferedReader err = new BufferedReader(new InputStreamReader(p.getErrorStream()));
         StringBuilder out = new StringBuilder();
         String line;
         while ((line = r.readLine()) != null) out.append(line).append("\\n");
+        StringBuilder errors = new StringBuilder();
+        while ((line = err.readLine()) != null) errors.append(line).append("\\n");
         int code = p.waitFor();
-        if (code != 0) throw new IOException("shell exit " + code);
+        if (code != 0) throw new IOException("shell exit " + code + ": " + errors);
         return out.toString();
     }
 
@@ -257,4 +276,4 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
                 }
-          
+        
