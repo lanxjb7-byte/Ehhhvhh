@@ -193,7 +193,7 @@ public class MainActivity extends Activity {
                                 .putBoolean("saved", true).apply();
                         }
                     }
-                    command = "wm density 567; settings put system peak_refresh_rate 90.0; settings put system min_refresh_rate 90.0";
+                    command = "set -e; wm density 567; settings put system peak_refresh_rate 90.0; settings put system min_refresh_rate 90.0; wm density";
                 } else {
                     if (!prefs.getBoolean("saved", false)) {
                         runOnUiThread(() -> { setStatus("Tidak ada pengaturan awal yang tersimpan."); resetToggle(); });
@@ -205,14 +205,29 @@ public class MainActivity extends Activity {
                     String densityCmd = ov == null || ov.isEmpty() ? "wm density reset" : "wm density " + ov;
                     String peakCmd = "null".equals(peak) ? "settings delete system peak_refresh_rate" : "settings put system peak_refresh_rate " + quote(peak);
                     String minCmd = "null".equals(min) ? "settings delete system min_refresh_rate" : "settings put system min_refresh_rate " + quote(min);
-                    command = densityCmd + "; " + peakCmd + "; " + minCmd;
+                    command = "set -e; " + densityCmd + "; " + peakCmd + "; " + minCmd + "; wm density";
                 }
                 String result = runShell(command);
-                if (!on) prefs.edit().putBoolean("saved", false).apply();
-                final boolean success = true;
+                if (on && !result.contains("Override density: 567")) {
+                    throw new IOException("DPI 567 tidak terverifikasi. Hasil wm density: " + result);
+                }
+                if (!on) {
+                    String expected = prefs.getString("override", "");
+                    if (expected != null && !expected.isEmpty()
+                            && !result.contains("Override density: " + expected)) {
+                        throw new IOException("DPI awal belum berhasil dipulihkan. Hasil: " + result);
+                    }
+                    if (expected == null || expected.isEmpty()) {
+                        if (result.contains("Override density:")) {
+                            throw new IOException("Override density masih aktif setelah OFF. Hasil: " + result);
+                        }
+                    }
+                    prefs.edit().putBoolean("saved", false).apply();
+                }
                 runOnUiThread(() -> {
                     prefs.edit().putBoolean("enabled", on).apply();
-                    setStatus(on ? "Lixxzy Lite ON • DPI 567 • target 90 Hz" : "Lixxzy Lite OFF • pengaturan dipulihkan");
+                    setStatus(on ? "Lixxzy Lite ON • DPI 567 terverifikasi • target 90 Hz diminta"
+                                 : "Lixxzy Lite OFF • DPI awal dipulihkan");
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
@@ -226,8 +241,6 @@ public class MainActivity extends Activity {
     private String quote(String s) { return "'" + s.replace("'", "'\\''") + "'"; }
 
     private String runShell(String cmd) throws Exception {
-        // Shizuku's newProcess method is not public in this API version.
-        // Invoke it reflectively so the project compiles against Shizuku 13.1.5.
         java.lang.reflect.Method method = Shizuku.class.getDeclaredMethod(
             "newProcess", String[].class, String[].class, String.class
         );
@@ -235,7 +248,7 @@ public class MainActivity extends Activity {
         java.lang.Process p;
         try {
             p = (java.lang.Process) method.invoke(
-                null, new String[]{"sh", "-c", cmd}, null, null
+                null, new String[]{"sh", "-c", cmd + " 2>&1"}, null, null
             );
         } catch (java.lang.reflect.InvocationTargetException e) {
             Throwable cause = e.getCause();
@@ -243,16 +256,17 @@ public class MainActivity extends Activity {
             throw new RuntimeException(cause);
         }
 
-        BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
-        BufferedReader err = new BufferedReader(new InputStreamReader(p.getErrorStream()));
-        StringBuilder out = new StringBuilder();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+        StringBuilder output = new StringBuilder();
         String line;
-        while ((line = r.readLine()) != null) out.append(line).append("\\n");
-        StringBuilder errors = new StringBuilder();
-        while ((line = err.readLine()) != null) errors.append(line).append("\\n");
+        while ((line = reader.readLine()) != null) {
+            output.append(line).append('\n');
+        }
         int code = p.waitFor();
-        if (code != 0) throw new IOException("shell exit " + code + ": " + errors);
-        return out.toString();
+        if (code != 0) {
+            throw new IOException("Shell exit " + code + ": " + output);
+        }
+        return output.toString();
     }
 
     private void launchGame(String pkg, String label) {
@@ -275,5 +289,5 @@ public class MainActivity extends Activity {
         Shizuku.removeRequestPermissionResultListener(permissionListener);
         super.onDestroy();
     }
-                }
-        
+    }
+    
